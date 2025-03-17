@@ -206,7 +206,7 @@ def get_device_status():
         return jsonify({"message": "No device selected"}), 204
 
     try:
-        result = subprocess.run(['catt', '-d', selected_device['ip_address'], 'status', '-j'], capture_output=True, text=True, timeout=CAST_TIMEOUT)
+        result = subprocess.run(['catt', '-d', selected_device['ip_address'], 'status'], capture_output=True, text=True, timeout=CAST_TIMEOUT)
 
         if result.returncode != 0:
             logging.error(f"catt status failed: {result.stderr}")
