@@ -119,7 +119,7 @@ def index():
             logging.error(f"Error getting initial volume: {e}")
             # Keep default volume if there's an error
 
-    return render_template('index.html', devices=devices, selected_device=selected_device, initial_volume=initial_volume)
+    return render_template('index.html', devices=devices, selected_device=selected_device, initial_volume=initial_volume) 
 
 
 @app.route('/scan')
