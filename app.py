@@ -6,6 +6,7 @@ import logging
 import os
 from urllib.parse import urlparse
 import re
+import json
 
 app = Flask(__name__)
 
@@ -14,18 +15,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- Global Variables and State Management ---
 
-devices = []
+# devices = []  # No longer needed at the top-level
 selected_device = None
 scan_in_progress = False
 scan_thread = None
 last_scan_timestamp = 0
 SCAN_COOLDOWN = 10
 CAST_TIMEOUT = 10
+DEVICES_FILE = 'devices.json'  # File to store device list
+
 
 # --- Device Discovery (using `catt scan`) ---
 
 def discover_devices():
-    global devices, scan_in_progress, last_scan_timestamp
+    global scan_in_progress, last_scan_timestamp  # devices removed
 
     if scan_in_progress or (time.time() - last_scan_timestamp < SCAN_COOLDOWN):
         logging.info("Scan already in progress or cooldown active.")
@@ -33,7 +36,7 @@ def discover_devices():
 
     scan_in_progress = True
     last_scan_timestamp = time.time()
-    devices = []
+    devices_temp = []  # Use a temporary list to avoid global issues.
     try:
         logging.info("Starting device discovery (using catt scan)...")
         result = subprocess.run(['catt', 'scan'], capture_output=True, text=True, timeout=10)
@@ -48,10 +51,12 @@ def discover_devices():
                 if match:
                     ip_address = match.group(1)
                     device_name = match.group(2).strip()
-                    devices.append({"name": device_name, "ip_address": ip_address})
+                    devices_temp.append({"name": device_name, "ip_address": ip_address})
                     logging.info(f"Found device: {device_name} - IP: {ip_address}")
 
-        logging.info(f"Discovery found devices: {devices}")
+        logging.info(f"Discovery found devices: {devices_temp}")
+        save_devices(devices_temp)  # Save to file after successful scan
+
 
     except subprocess.TimeoutExpired:
         logging.error("catt scan timed out.")
@@ -59,6 +64,23 @@ def discover_devices():
         logging.error(f"Error during device discovery: {e}")
     finally:
         scan_in_progress = False
+
+
+def load_devices():
+    try:
+        with open(DEVICES_FILE, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        logging.info(f"{DEVICES_FILE} not found or is invalid, returning empty list.")
+        return []
+
+def save_devices(devices_list):
+    try:
+        with open(DEVICES_FILE, 'w') as f:
+            json.dump(devices_list, f)
+        logging.info(f"Devices saved to {DEVICES_FILE}")
+    except Exception as e:
+        logging.error(f"Error saving devices to {DEVICES_FILE}: {e}")
 
 
 
@@ -74,8 +96,19 @@ def is_valid_url(url):
 @app.route('/')
 def index():
     global selected_device
-    initial_volume = 0.5  # Default volume
-    if selected_device:
+    devices = load_devices() # Load devices *every time* index is loaded
+    initial_volume = 0.5
+
+    if selected_device:  #Keep selected device if there is one.
+        device_found = False
+        for dev in devices:
+            if dev["ip_address"] == selected_device["ip_address"]: #Selected based on ip
+                device_found = True
+                break
+        if not device_found: #If selected device is not found, unselect.
+            selected_device = None
+
+    if selected_device:  #If, after unselection checks, we still have selected_device
         try:
             # Get initial volume from the device *if* a device is selected
             status_output = subprocess.check_output(['catt', '-d', selected_device['ip_address'], 'status'], text=True, timeout=5)
@@ -86,7 +119,7 @@ def index():
             logging.error(f"Error getting initial volume: {e}")
             # Keep default volume if there's an error
 
-    return render_template('index.html', selected_device=selected_device, initial_volume=initial_volume)
+    return render_template('index.html', devices=devices, selected_device=selected_device, initial_volume=initial_volume)
 
 
 @app.route('/scan')
@@ -101,12 +134,14 @@ def scan_devices():
 
 @app.route('/get_devices')
 def get_devices_endpoint():
+    devices = load_devices()  # Load devices from file
     return jsonify(devices)
 
 
 @app.route('/select_device', methods=['POST'])
 def select_device():
     global selected_device
+    devices = load_devices()  #Load every time to make sure it's up to date.
     device_identifier = request.form.get('device')
     for dev_info in devices:
         if dev_info["name"] == device_identifier or dev_info["ip_address"] == device_identifier:
