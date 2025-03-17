@@ -143,7 +143,15 @@ def select_device():
     global selected_device
     devices = load_devices()  #Load every time to make sure it's up to date.
     device_identifier = request.form.get('device')
+
+    logging.info(f"Attempting to select device: {device_identifier}")  # Log the received identifier
+
+    if not device_identifier:
+        logging.warning("No device identifier provided in request.")
+        return jsonify({"message": "No device identifier provided"}), 400
+
     for dev_info in devices:
+        logging.debug(f"Checking device: {dev_info['name']} ({dev_info['ip_address']})") #log each device
         if dev_info["name"] == device_identifier or dev_info["ip_address"] == device_identifier:
             selected_device = dev_info
             logging.info(f"Device selected: {selected_device['name']} ({selected_device['ip_address']})")
@@ -154,16 +162,24 @@ def select_device():
                 volume_match = re.search(r'volume_level:\s*([\d.]+)', status_output)  # Correct regex
                 if volume_match:
                     initial_volume = float(volume_match.group(1))
+                    logging.info(f"Initial volume for {selected_device['name']}: {initial_volume}") #Log initial volume.
                     return jsonify({"message": "Device selected", "name": selected_device['name'], "ip": selected_device['ip_address'], "volume": initial_volume})
-            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, Exception) as e:
-                logging.error(f"Error getting initial volume after selection: {e}")
+                else:
+                    logging.warning(f"Could not find volume in status output for {selected_device['name']}.")
+                    #Return without the volume.
+                    return jsonify({"message": "Device selected", "name": selected_device['name'], "ip": selected_device['ip_address']})
+
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+                logging.error(f"Error getting initial volume after selection for {selected_device['name']}: {e}")
                 # Return success, but without volume, if there's an error getting it
+                return jsonify({"message": "Device selected", "name": selected_device['name'], "ip": selected_device['ip_address']})
+            except Exception as e:
+                logging.exception(f"Unexpected error getting initial volume for {selected_device['name']}: {e}") #use logging.exception
                 return jsonify({"message": "Device selected", "name": selected_device['name'], "ip": selected_device['ip_address']})
 
 
-    logging.error(f"Failed to select device: {device_identifier}")
-    return jsonify({"message": f"Failed to select device {device_identifier}"}), 400
-
+    logging.error(f"Failed to select device: {device_identifier} - Device not found in loaded devices.") #more specific
+    return jsonify({"message": f"Failed to select device {device_identifier} - Device not found"}), 400
 
 
 @app.route('/cast', methods=['POST'])
