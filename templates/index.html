@@ -24,9 +24,9 @@
         </ul>
 
     <h2>Selected Device</h2>
-    <p>
+   <p>
         Selected Device: <span id="selected-device-name">{% if selected_device %}{{ selected_device.name }}{% else %}None{% endif %}</span>
-        {% if selected_device %}({{ selected_device.ip_addr }}){% endif %}
+        <span id="selected-device-ip">{% if selected_device %}({{ selected_device.ip_addr }}){% endif %}</span>
     </p>
 
 
@@ -108,19 +108,19 @@
                 devices.forEach(device => {
                     const listItem = document.createElement('li');
                     const button = document.createElement('button');
-                    button.textContent = `${device.name} (${device.ip_address})`;
-                    button.onclick = () => selectDevice(device.ip_address);
+                    button.textContent = `<span class="math-inline">\{device\.name\} \(</span>{device.ip_address})`;
+                    button.onclick = () => selectDevice(device.ip_address); // Pass IP
                     listItem.appendChild(button);
                     deviceList.appendChild(listItem);
                 });
 
-                // Highlight selected device, if any
-                const selectedDeviceNameElem = document.getElementById('selected-device-name');
-                if (selectedDeviceNameElem.textContent.trim() !== "None") {
-                    const selectedDeviceName = selectedDeviceNameElem.textContent.trim();
+                 // Highlight selected device, if any.  This is crucial for a good UX.
+                const selectedDeviceIpElem = document.getElementById('selected-device-ip');
+                if (selectedDeviceIpElem && selectedDeviceIpElem.textContent.trim() !== "()") {  // Check if any device is selected
+                  const ipTrimmed = selectedDeviceIpElem.textContent.trim().slice(1,-1);
                     for (let i = 0; i < deviceList.children.length; i++) {
                         const button = deviceList.children[i].querySelector('button');
-                        if (button.textContent.startsWith(selectedDeviceName)) {
+                        if (button.textContent.includes(ipTrimmed)) {
                             button.classList.add('selected');
                             break;
                         }
@@ -133,31 +133,33 @@
             });
     }
 
-        function selectDevice(deviceIdentifier) {
-            clearError('scan-status');
-            const formData = new FormData();
-            formData.append('device', deviceIdentifier);
-            fetch('/select_device', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                if (!response.ok) {
-                   return response.json().then(data => {throw new Error(data.message || "Failed to Select Device")});
-                }
-                return response.json();
-            })
-            .then(data => {
-                document.getElementById('selected-device-name').textContent = data.name;
-                 document.getElementById('selected-device-ip').textContent = data.ip;
-                getDevices(); // Refresh device list to update selection
-                updateStatus(); // Immediately update status
-            })
-              .catch(error => {
-                    displayError('scan-status', `Error selecting device: ${error.message}`);
-                    console.error('Error selecting device:', error);
-              });
-        }
+    function selectDevice(deviceIdentifier) {
+        clearError('scan-status');
+        const formData = new FormData();
+        formData.append('device', deviceIdentifier); // Always send IP
+        fetch('/select_device', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(data => {throw new Error(data.message || "Failed to Select Device")});
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Update the selected device name *and* IP in the UI.
+            document.getElementById('selected-device-name').textContent = data.name;
+            document.getElementById('selected-device-ip').textContent = `(${data.ip})`;  // Keep parentheses
+            getDevices(); // Refresh device list to update selection *after* setting name/IP
+            updateStatus(); // Immediately update status
+        })
+        .catch(error => {
+            displayError('scan-status', `Error selecting device: ${error.message}`);
+            console.error('Error selecting device:', error);
+        });
+}
+
 
 
        function castContent() {
@@ -181,8 +183,7 @@
                     throw new Error(data.message || 'Casting failed');
                 }).catch(err => {
                     if (err instanceof SyntaxError) {
-                        // Response was not JSON, try to get text
-                      return response.text().then(text => {throw new Error(text || 'Casting failed');});
+                        return response.text().then(text => {throw new Error(text || 'Casting failed');});
                     }
                   throw err; // Re-throw if it's not a SyntaxError
                 });
@@ -254,6 +255,13 @@
 
 
         function updateStatus() {
+          // Only fetch status if a device is selected.  This prevents the 400 errors.
+          const selectedDeviceIp = document.getElementById('selected-device-ip').textContent.trim();
+          if (selectedDeviceIp === '()') {
+                document.getElementById('device-status').innerHTML = '<p>No device selected.</p>';
+                return; // Exit early if no device is selected
+          }
+
           fetch('/status')
             .then(response => {
               if (!response.ok) {
@@ -290,7 +298,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             getDevices();
             updateStatus(); // Get initial status
-            setInterval(updateStatus, 1000); // Update status every second
+            setInterval(updateStatus, 1000); // Update status every second, but only if device selected
         });
 
     </script>
