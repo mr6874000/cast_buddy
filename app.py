@@ -244,16 +244,24 @@ def get_device_status():
         return jsonify({"message": "No device selected"}), 204
 
     try:
-        result = subprocess.run(['catt', '-d', selected_device['ip_address'], 'status'], capture_output=True, text=True, timeout=CAST_TIMEOUT)
+        device_name = selected_device.get('name', 'Unknown Device')  # Get device name, default to "Unknown Device"
+        device_ip = selected_device['ip_address']
+        logging.info(f"Getting status for device: {device_name} ({device_ip})")  # Log the device details
+
+        result = subprocess.run(['catt', '-d', device_ip, 'status'], capture_output=True, text=True, timeout=CAST_TIMEOUT)
 
         if result.returncode != 0:
-            logging.error(f"catt status failed: {result.stderr}")
-            return jsonify({"message": f"Error getting status: {result.stderr}"}), 500
+            error_message = result.stderr.strip()  # Get the error and clean it up
+            logging.error(f"catt status failed for {device_name} ({device_ip}): {error_message}")
+            return jsonify({"message": f"Error getting status for {device_name}: {error_message}"}), 500
         else:
-            logging.info(f"catt status output: {result.stdout}")
+            output = result.stdout.strip() #clean up output
+            logging.info(f"catt status output for {device_name} ({device_ip}):\n{output}")
+
             # Parse the output using regular expressions (more reliable than JSON)
             status_data = {}
-            output = result.stdout
+            status_data['device_name'] = device_name  # Include the device name in the response
+            status_data['device_ip'] = device_ip
 
             # Extract relevant information using regular expressions
             match = re.search(r'state:\s*(\w+)', output)
@@ -268,24 +276,29 @@ def get_device_status():
             if match:
                 status_data['title'] = match.group(1).strip()
             
-            match = re.search(r'current_time:\s*([\d.]+)', output)  #Gets current time.
+            match = re.search(r'current_time:\s*([\d.]+)', output)
             if match:
                  status_data['current_time'] = float(match.group(1))
-
 
             match = re.search(r'volume_level:\s*([\d.]+)', output)
             if match:
                 status_data['volume_level'] = float(match.group(1))
+            
+            # Create a nicely formatted response for the client (optional, for better readability)
+            formatted_response = {
+                "message": f"Status for {device_name} ({device_ip})",
+                "status": status_data
+            }
 
-            return jsonify(status_data)
+            return jsonify(formatted_response)
 
 
     except subprocess.TimeoutExpired:
-        logging.error("catt status timed out.")
-        return jsonify({"message": "Status request timed out"}), 500
+        logging.error(f"catt status timed out for {device_name} ({device_ip}).")
+        return jsonify({"message": f"Status request timed out for {device_name}"}), 500
     except Exception as e:
-        logging.error(f"Error getting device status: {e}")
-        return jsonify({"message": f"Error getting status: {e}"}), 500
+        logging.error(f"Error getting device status for {device_name} ({device_ip}): {e}")
+        return jsonify({"message": f"Error getting status for {device_name}: {e}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
