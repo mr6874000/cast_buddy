@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chromecast Controller</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .device-list { list-style: none; padding: 0; }
+        .device-list li { margin-bottom: 10px; }
+        .selected { font-weight: bold; }
+        .controls { margin-top: 20px; }
+        .status { margin-top: 20px; border: 1px solid #ccc; padding: 10px; }
+        .error-message { color: red; } /* Style for error messages */
+    </style>
+</head>
+<body>
+    <h1>Chromecast Controller</h1>
+
+    <h2>Devices</h2>
+    <button onclick="scanDevices()">Scan for Devices</button>
+    <div id="scan-status"></div>
+    <ul id="device-list" class="device-list">
+        </ul>
+
+    <h2>Selected Device</h2>
+    <p>
+        Selected Device: <span id="selected-device-name">{% if selected_device %}{{ selected_device.name }}{% else %}None{% endif %}</span>
+        {% if selected_device %}({{ selected_device.ip_addr }}){% endif %}
+    </p>
+
+
+    <h2>Cast Content</h2>
+    <form id="cast-form">
+        <input type="text" id="cast-url" placeholder="Enter URL or YouTube link" required>
+        <button type="button" onclick="castContent()">Cast</button>  </form>
+    <div id="cast-status"></div>
+
+    <h2>Media Controls</h2>
+    <div class="controls">
+        <button onclick="controlMedia('play')">Play</button>
+        <button onclick="controlMedia('pause')">Pause</button>
+        <button onclick="controlMedia('stop')">Stop</button>
+        <button onclick="controlMedia('rewind')">Rewind</button>
+        <button onclick="controlMedia('forward')">Forward</button>
+        <br>
+        <label for="volume">Volume:</label>
+        <input type="range" id="volume" min="0" max="1" step="0.1" value="0.5" oninput="updateVolumeDisplay(this.value)" onchange="setVolume(this.value)">
+        <span id="volume-display">0.5</span>
+        <br>
+        <label for="seek">Seek to (seconds):</label>
+        <input type="number" id="seek_position" min="0">
+        <button onclick="seekToPosition()">Seek</button>
+    </div>
+
+    <h2>Device Status</h2>
+    <div id="device-status" class="status">
+        </div>
+
+    <script>
+
+        function displayError(elementId, message) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<p class="error-message">${message}</p>`;
+        }
+
+        function clearError(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        function updateVolumeDisplay(value) {
+            document.getElementById('volume-display').textContent = value;
+        }
+
+        function scanDevices() {
+            clearError('scan-status'); // Clear previous error
+            document.getElementById('scan-status').innerHTML = '<p>Scanning...</p>';
+            fetch('/scan')
+                .then(response => {
+                    if (!response.ok) {
+                      return response.json().then(data => {throw new Error(data.message || 'Scan failed')});
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    document.getElementById('scan-status').innerHTML = `<p>${data.message}</p>`;
+                    getDevices(); // Refresh the device list
+                })
+                .catch(error => {
+                  displayError('scan-status', `Error scanning: ${error.message}`);
+                    console.error('Error during scan:', error);
+                });
+        }
+
+
+    function getDevices() {
+        clearError('scan-status');
+        fetch('/get_devices')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Network response was not ok: ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(devices => {
+                const deviceList = document.getElementById('device-list');
+                deviceList.innerHTML = ''; // Clear existing list
+                devices.forEach(device => {
+                    const listItem = document.createElement('li');
+                    const button = document.createElement('button');
+                    button.textContent = `${device.name} (${device.ip_address})`;
+                    button.onclick = () => selectDevice(device.ip_address);
+                    listItem.appendChild(button);
+                    deviceList.appendChild(listItem);
+                });
+
+                // Highlight selected device, if any
+                const selectedDeviceNameElem = document.getElementById('selected-device-name');
+                if (selectedDeviceNameElem.textContent.trim() !== "None") {
+                    const selectedDeviceName = selectedDeviceNameElem.textContent.trim();
+                    for (let i = 0; i < deviceList.children.length; i++) {
+                        const button = deviceList.children[i].querySelector('button');
+                        if (button.textContent.startsWith(selectedDeviceName)) {
+                            button.classList.add('selected');
+                            break;
+                        }
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching devices:', error);
+                displayError('scan-status', 'Error fetching device list.');
+            });
+    }
+
+        function selectDevice(deviceIdentifier) {
+            clearError('scan-status');
+            const formData = new FormData();
+            formData.append('device', deviceIdentifier);
+            fetch('/select_device', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                   return response.json().then(data => {throw new Error(data.message || "Failed to Select Device")});
+                }
+                return response.json();
+            })
+            .then(data => {
+                document.getElementById('selected-device-name').textContent = data.name;
+                 document.getElementById('selected-device-ip').textContent = data.ip;
+                getDevices(); // Refresh device list to update selection
+                updateStatus(); // Immediately update status
+            })
+              .catch(error => {
+                    displayError('scan-status', `Error selecting device: ${error.message}`);
+                    console.error('Error selecting device:', error);
+              });
+        }
+
+
+       function castContent() {
+          clearError('cast-status'); // Clear previous errors
+          const contentUrl = document.getElementById('cast-url').value;
+          if (!contentUrl) {
+              displayError('cast-status', 'Please enter a URL.');
+              return;
+          }
+          const formData = new FormData();
+          formData.append('url', contentUrl);
+
+            fetch('/cast', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                  // Attempt to parse JSON, fall back to text if not possible
+                  return response.json().then(data => {
+                    throw new Error(data.message || 'Casting failed');
+                }).catch(err => {
+                    if (err instanceof SyntaxError) {
+                        // Response was not JSON, try to get text
+                      return response.text().then(text => {throw new Error(text || 'Casting failed');});
+                    }
+                  throw err; // Re-throw if it's not a SyntaxError
+                });
+            }
+              return response.json();})
+            .then(data => {
+                document.getElementById('cast-status').innerHTML = `<p>${data.message}</p>`;
+                updateStatus(); // Update device status after casting
+            })
+            .catch(error => {
+                 displayError('cast-status', `Error casting: ${error.message}`);
+                console.error('Error casting:', error);
+            });
+        }
+
+
+
+        function controlMedia(action) {
+            const formData = new FormData();
+            formData.append('action', action);
+            fetch('/controls', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                updateStatus(); // Update device status after control action
+            })
+            .catch(error => console.error('Error controlling media:', error));
+        }
+
+        function setVolume(volumeLevel) {
+            const formData = new FormData();
+            formData.append('action', 'volume');
+            formData.append('volume_level', volumeLevel);
+            fetch('/controls', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                updateStatus();
+            })
+            .catch(error => console.error('Error setting volume:', error));
+        }
+
+       function seekToPosition() {
+            const position = document.getElementById('seek_position').value;
+            if (position === "" || isNaN(parseFloat(position))) {
+                alert("Please enter a valid seek position.");
+                return;
+            }
+            const formData = new FormData();
+            formData.append('action', 'seek');
+            formData.append('position', position);
+            fetch('/controls', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                updateStatus();
+            })
+            .catch(error => console.error('Error seeking:', error));
+        }
+
+
+        function updateStatus() {
+          fetch('/status')
+            .then(response => {
+              if (!response.ok) {
+                // Try to get a JSON error message, fall back to text
+                return response.json().then(data => {
+                  throw new Error(data.message || `HTTP error ${response.status}`);
+                }).catch(err => {
+                    // If JSON parsing fails, use the text
+                    if (err instanceof SyntaxError) {
+                        return response.text().then(text=> {throw new Error(text || `HTTP error ${response.status}`);});
+                    }
+                    throw err; // rethrow if it's something else
+                });
+              }
+              return response.json();
+            })
+            .then(data => {
+              const statusDiv = document.getElementById('device-status');
+              statusDiv.innerHTML = `
+                    <p>Status: ${data.cast_mode || 'Idle'}</p>
+                    <p>Current Time: ${data.current_time !== null ? data.current_time.toFixed(2) : 'N/A'}</p>
+                    <p>Title: ${data.title || 'N/A'}</p>
+                    <p>Player State: ${data.player_state || 'UNKNOWN'}</p>
+                `;
+            })
+            .catch(error => {
+              console.error('Error fetching status:', error);
+              document.getElementById('device-status').innerHTML = `<p class="error-message">Error: ${error.message}</p>`;
+            });
+        }
+
+
+        // Initial setup
+        document.addEventListener('DOMContentLoaded', () => {
+            getDevices();
+            updateStatus(); // Get initial status
+            setInterval(updateStatus, 1000); // Update status every second
+        });
+
+    </script>
+</body>
+</html>
