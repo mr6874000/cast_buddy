@@ -1,0 +1,115 @@
+name: Deploy to Truenas 112
+run-name: ${{ gitea.actor }} is testing out Gitea Actions 🚀
+on:
+  push:
+
+env:
+  DOCKER_LOCAL_HOST: 10.25.0.238:5000
+  MQTT_BROKER: 10.25.0.112
+  IS_DEV_BRANCH: "false"
+  TRUENAS_DEPLOY: "true"
+  DOCKER_DEPLOY: "false"
+  APP_PORT: 10001
+
+jobs:
+  Explore-Gitea-Actions:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "🎉 The job was automatically triggered by a ${{ gitea.event_name }} event."
+      - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by Gitea!"
+      - run: echo "🔎 The name of your branch is ${{ gitea.ref }} and your repository is ${{ gitea.repository }}."
+
+      # Step to sanitize the repository name
+      - name: Sanitize Repository Name
+        id: sanitize_repo_name
+        run: |
+          REPO_FULL_NAME="${{ gitea.repository }}"  # Example: "owner/repository"
+          
+          # Extract only the repository name
+          REPO_NAME=$(echo "$REPO_FULL_NAME" | awk -F/ '{print $2}')
+          
+          # Sanitize the repository name
+          SANITIZED_NAME=$(echo "$REPO_NAME" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')
+          
+          echo "Original Repository Name: $REPO_NAME"
+          echo "Sanitized Repository Name: $SANITIZED_NAME"
+          
+          echo "::set-output name=sanitized_name::$SANITIZED_NAME"
+
+      # Set environment variables dynamically based on sanitized name
+      - name: Set Environment Variables
+        run: |
+          echo "IMAGE_NAME=${{ steps.sanitize_repo_name.outputs.sanitized_name }}" >> $GITHUB_ENV
+          echo "DEPLOYMENT_NAME=${{ steps.sanitize_repo_name.outputs.sanitized_name }}" >> $GITHUB_ENV
+
+      # Install Node.js (if required)
+      - name: Install Node.js
+        run: |
+          sudo apt update
+          sudo apt install -y nodejs npm
+
+      # Check out the repository code
+      - name: Check out Repository Code
+        uses: actions/checkout@v4
+
+     
+      # Set up Python environment
+      - name: Set up Python 3 and Install Dependencies
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip requests paramiko
+
+      # Prune unused Docker images
+      - name: Prune Unused Docker Images
+        run: |
+          echo "🔍 Cleaning up unused Docker images..."
+          docker image prune -af --filter "until=24h"
+          echo "🗑️ Old Docker images cleaned up successfully!"
+
+      - name: Build Docker Image
+        run: docker build -t $DOCKER_LOCAL_HOST/${{ env.IMAGE_NAME }} --build-arg MQTT_BROKER=${{ env.MQTT_BROKER }} .
+
+      # Tag the Docker image
+      - name: Tag Docker Image
+        run: docker tag $DOCKER_LOCAL_HOST/${{ env.IMAGE_NAME }}:latest $DOCKER_LOCAL_HOST/${{ env.IMAGE_NAME }}:latest
+
+      # Push Docker image to the specified registry
+      - name: Push Docker Image to Local Registry
+        run: docker push $DOCKER_LOCAL_HOST/${{ env.IMAGE_NAME }}:latest
+
+      - name: Check Docker Registry for Image
+        run: |
+          response=$(curl -s http://10.25.0.238:5000/v2/_catalog)
+          if echo "$response" | jq -e ".repositories | index(\"${{ env.IMAGE_NAME }}\")" > /dev/null; then
+            echo "{ \"repositories\": [\"${{ env.IMAGE_NAME }}\"] }"
+          else
+            echo "Error: '${{ env.IMAGE_NAME }}' repository not found in registry catalog"
+            exit 1
+          fi
+
+      - name: Redeploy on TrueNAS
+        if: ${{ env.TRUENAS_DEPLOY == 'true' && env.IS_DEV_BRANCH == 'false' }}
+        run: |
+          set -e  # Exit immediately if any command exits with a non-zero status
+          CHART_NAME="${IMAGE_NAME}"
+          URL="http://10.25.0.112:8100/api/truenas/redeploy/${CHART_NAME}"
+          
+          echo "Triggering redeployment for chart: $CHART_NAME"
+          
+          response=$(curl -s -o response.txt -w "%{http_code}" "$URL")
+
+          if [ "$response" -ne 200 ]; then
+            echo "❌ Failed to trigger redeployment! HTTP status: $response"
+            cat response.txt
+            exit 1
+          else
+            echo "✅ Redeployment triggered successfully!"
+          fi
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+
+
+      # Print the final job status
+      - run: echo "🍏 This job's status is ${{ job.status }}."
+
