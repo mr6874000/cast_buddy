@@ -195,7 +195,7 @@ def cast_content():
     try:
         logging.info(f"Casting {content_url} to {selected_device['name']} ({selected_device['ip_address']})")
         result = subprocess.run(
-            ['catt', '-d', selected_device['ip_address'], 'cast', content_url],
+            ['catt', '-d', selected_device['ip_address'], 'cast_site', content_url],
             capture_output=True,
             text=True,
             timeout=CAST_TIMEOUT
